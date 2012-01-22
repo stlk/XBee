@@ -5,28 +5,23 @@ using System.Threading;
 namespace STLK
 {
     public delegate void PortStatusReceived(byte status);
-
-    public struct PortSample
-    {
-        public byte Sample;
-        public bool Result;
-    }
+    public delegate void XBeeCallback(ApiFrame frame);
 
     public class XBee
     {
-        private AutoResetEvent stopWaitHandle = new AutoResetEvent(false);
-
         public event PortStatusReceived StatusReceived;
+
+        private const int apiIdentifier = 0;
+        private const int frameIdentifier = 1;
+
+        private object _syncObject = new object();
+        private byte _nextFrameID;
 
         private readonly SerialPort _uart;
         private readonly ApiFrameBuilder _frameBuilder;
-        private byte _lastReadSample;
+        private ApiFrame[] _frameBuffer;
 
-        private byte[] _txDataBase = new byte[] {
-            0x7E,// start byte
-            0x0, // high part of length (always 0)
-            0x0, // low part of length (the number of bytes
-                 // that follow, not including checksum)
+        private readonly byte[] _txDataBase = new byte[] {
             0x0, // frame type
             0x1, // frame id, set to zero for no reply
             // ID of recipient, or use 0xFFFF for broadcast 
@@ -36,8 +31,8 @@ namespace STLK
             0x0,
             0x0,
             0x0,
-            0xFF,
-            0xFF,
+            0x0,
+            0x0,
             // 16 bit of recipient or 0xFFFE if unknown
             0xFF,
             0xFE
@@ -45,7 +40,10 @@ namespace STLK
 
         public XBee()
         {
+            _frameBuffer = new ApiFrame[10];
+            _nextFrameID = 1;
             _frameBuilder = new ApiFrameBuilder();
+
             _uart = new SerialPort("COM1", 9800, Parity.None, 8, StopBits.One);
             _uart.DataReceived += DataReceived;
             _uart.Open();
@@ -60,21 +58,24 @@ namespace STLK
             else
                 stateByte = 0x4;
 
-            SendRemoteAtCommand(command, stateByte);
+            SendRemoteAtCommand(command, null, stateByte);
         }
 
-        public void SendRemoteAtCommand(XBeeCommand command)
+        public void SendRemoteAtCommand(XBeeCommand command, XBeeCallback callback)
         {
-            SendRemoteAtCommand(command, 0x0);
+            SendRemoteAtCommand(command, callback, 0x0);
         }
 
-        public void SendRemoteAtCommand(XBeeCommand command, byte value)
+        public byte SendRemoteAtCommand(XBeeCommand command, XBeeCallback callback, byte value)
         {
+            ApiFrame frame = new ApiFrame();
+            byte frameID = GetNextFrameID();
+
             int txDataLenght;
             if (value == 0x0)
-                txDataLenght = 4;
+                txDataLenght = 3;
             else
-                txDataLenght = 5;
+                txDataLenght = 4;
 
             byte[] txDataContent = new byte[txDataLenght];
             txDataContent[0] = 0x02; // appply changes on remote
@@ -87,14 +88,95 @@ namespace STLK
                 txDataContent[3] = value;
 
             byte[] txData = Utility.CombineArrays(_txDataBase, txDataContent);
-            txData[2] = (byte)(txData.Length - 4);
-            txData[3] = (byte)ApiFrameName.RemoteCommandRequest;
+            txData[0] = (byte)ApiFrameName.RemoteCommandRequest;
+            txData[1] = frameID;
 
-            CalculateChecksum(txData);
+            frame.FrameData = txData;
+            frame.Callback = callback;
 
-            _uart.Flush();
-            _uart.Write(txData, 0, txData.Length);
+            return SendApiFrame(frame);
 
+        }
+
+        public ApiFrame SendRemoteAtCommandSync(XBeeCommand command)
+        {
+            AutoResetEvent stopWaitHandle = new AutoResetEvent(false);
+            ApiFrame receivedFrame = null;
+
+            SendRemoteAtCommand(command, result =>
+            {
+                receivedFrame = result;
+                stopWaitHandle.Set();
+            });
+            stopWaitHandle.WaitOne(500, false);
+
+            return receivedFrame;
+        }
+
+        public byte SendAtCommand(XBeeCommand command)
+        {
+            return SendAtCommand(command, null, 0, 0);
+        }
+
+        public byte SendAtCommand(XBeeCommand command, XBeeCallback callback)
+        {
+            return SendAtCommand(command, callback, 0, 0);
+        }
+
+        public byte SendAtCommand(XBeeCommand command, XBeeCallback callback, uint value, int size)
+        {
+            ApiFrame frame = new ApiFrame();
+            byte frameID = GetNextFrameID();
+            byte[] buffer = new byte[4 + size];
+
+            buffer[apiIdentifier] = (byte)ApiFrameName.ATCommand;
+            buffer[frameIdentifier] = frameID;
+            ushort commandUShort = (ushort)command;
+            buffer[2] = (byte)(commandUShort >> 8);
+            buffer[3] = (byte)commandUShort;
+
+            if (size > 0)
+            {
+                Utility.InsertValueIntoArray(buffer, 4, size, value);
+            }
+            frame.FrameData = buffer;
+            frame.Callback = callback;
+
+            return SendApiFrame(frame);
+        }
+
+        public byte SendData(ulong destinationSerialNumber, ushort destinationAddress, byte[] data, XBeeCallback callback)
+        {
+            ApiFrame frame = new ApiFrame();
+            byte[] buffer = new byte[2 + sizeof(ulong) + sizeof(ushort) + 2];
+            buffer[apiIdentifier] = (byte)ApiFrameName.ZigBeeTransmitRequest;
+            buffer[frameIdentifier] = GetNextFrameID();
+
+            if (destinationAddress == 0)
+            {
+                // only the coordinator has a destination address of 0, and to get this frame to
+                // the coordinator, we need to set the serial number to 0 as well no matter what
+                // was passed in.
+                destinationSerialNumber = 0;
+            }
+
+            Utility.InsertValueIntoArray(buffer, 2, sizeof(uint), (uint)(destinationSerialNumber >> 32));
+            Utility.InsertValueIntoArray(buffer, 6, sizeof(uint), (uint)(destinationSerialNumber & 0xFFFFFFFF));
+            Utility.InsertValueIntoArray(buffer, 10, sizeof(ushort), destinationAddress);
+            Utility.InsertValueIntoArray(buffer, 12, sizeof(ushort), 0);
+            frame.FrameData = Utility.CombineArrays(buffer, data);
+            frame.Callback = callback;
+
+            return SendApiFrame(frame);
+        }
+
+        internal byte SendApiFrame(ApiFrame frame)
+        {
+            byte frameID = frame.FrameData[frameIdentifier];
+            _frameBuffer[frameID] = frame;
+            var buffer = frame.Serialize();
+            _uart.Write(buffer, 0, frame.Length + 4);
+            return frameID;
         }
 
         private void DataReceived(object sender, SerialDataReceivedEventArgs e)
@@ -120,80 +202,57 @@ namespace STLK
 
         }
 
-        private void ReceivedApiFrame(byte[] frame)
+        private void ReceivedApiFrame(ApiFrame frame)
         {
-            switch (frame[0]) // frame identifier
+            switch (frame.FrameData[apiIdentifier])
             {
                 case (byte)ApiFrameName.ZigBeeIODataSampleRxIndicator:
-
                     if (frame.Length == 18)
                     {
                         if (StatusReceived != null)
-                            StatusReceived(frame[17]);
+                            StatusReceived(frame.FrameData[17]);
                     }
                     break;
+                case (byte)ApiFrameName.ATCommandResponse:
+                    ReceivedATCommandResponse(frame);
+                    break;
                 case (byte)ApiFrameName.RemoteCommandResponse:
-
-                    if (frame.Length == 21)
-                    {
-                        _lastReadSample = frame[20];
-                        stopWaitHandle.Set();
-                    }
+                    ReceivedATCommandResponse(frame);
                     break;
                 default:
                     break;
             }
 
-            //string res = string.Empty;
-            //foreach (byte b in frame)
-            //{
-            //    res += b.ToString() + " ";
-            //}
-
-            //Debug.Print(res);
         }
 
-        public void SendTransmitRequest(byte[] data)
+        internal void ReceivedATCommandResponse(ApiFrame frame)
         {
-            //txDataContent[0] = 0x0 // broadcast radius
-            //txDataContent[1] = 0x0 // options
+            byte frameID = frame.FrameData[frameIdentifier];
+            XBeeCommand command = (XBeeCommand)(frame.FrameData[2] << 8 | frame.FrameData[3]);
+            ApiFrame sentFrame = _frameBuffer[frameID];
 
-            byte[] txDataContent = new byte[data.Length + 3];
-            for (int i = 0; i < data.Length; i++)
-                txDataContent[i + 2] = data[i];
-
-            byte[] txData = Utility.CombineArrays(_txDataBase, txDataContent);
-            txData[2] = (byte)(txData.Length - 4);
-            txData[3] = (byte)ApiFrameName.ZigBeeTransmitRequest;
-
-            CalculateChecksum(txData);
-
-            _uart.Flush();
-            _uart.Write(txData, 0, txData.Length);
-
-        }
-
-        public PortSample GetSample()
-        {
-            SendRemoteAtCommand(XBeeCommand.ForceSample);
-            bool receivedSignal = stopWaitHandle.WaitOne(500, false);
-
-            return new PortSample { Sample = _lastReadSample, Result = receivedSignal };
-        }
-
-        /// <summary>
-        /// Calculates checksum and inserts it to the last field
-        /// </summary>
-        /// <param name="data"></param>
-        private void CalculateChecksum(byte[] data)
-        {
-            byte checkSum = 0xFF;
-            for (int i = 3; i < data.Length - 1; i++)
+            if (sentFrame != null && sentFrame.Callback != null)
             {
-                checkSum -= data[i];
+                sentFrame.Callback(frame);
+                if (!(command == XBeeCommand.NodeDiscover && frame.Length > 0))
+                {
+                    _frameBuffer[frameID] = null;
+                }
             }
 
-            data[data.Length - 1] = checkSum;
+        }
+
+        private byte GetNextFrameID()
+        {
+            lock (_syncObject)
+            {
+                _nextFrameID++;
+                if (_nextFrameID > 9)
+                {
+                    _nextFrameID = 2;
+                }
+                return _nextFrameID;
+            }
         }
 
     }

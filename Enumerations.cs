@@ -69,7 +69,7 @@ namespace STLK
         // RF Interfacing
         PowerLevel = 0x504C,                // PL
         PowerMode = 0x504D,                 // PM
-        ReceivedSignalStrength = 0x4244,    // DB
+        ReceivedSignalStrength = 0x4442,    // DB
         // Serial Interfacing (I/O)
         ApiEnable = 0x4150,                 // AP
         ApiOptions = 0x414F,                // AO
@@ -110,6 +110,26 @@ namespace STLK
         SleepOptions = 0x534F,              // SO
     };
 
+    public enum DeliveryStatus : byte
+    {
+        Success = 0x00,
+        ClearChannelAssessmentFailure = 0x02,
+        InvalidDestinationEndpoint = 0x15,
+        NetworkAckFailure = 0x21,
+        NotJoinedToNetwork = 0x22,
+        SelfAddresses = 0x23,
+        AddressNotFound = 0x24,
+        RouteNotFound = 0x25
+    };
+
+    public enum DiscoveryStatus : byte
+    {
+        NoDiscoveryOverhead = 0x00,
+        AddressDiscovery = 0x01,
+        RouteDiscovery = 0x02,
+        AddressAndRouteDiscovery = 0x03
+    };
+
     //public enum DeviceType : byte
     //{
     //    Coordinator = 0,
@@ -135,23 +155,4 @@ namespace STLK
     //    Broadcast = 2
     //};
 
-    //public enum DeliveryStatus : byte
-    //{
-    //    Success = 0x00,
-    //    ClearChannelAssessmentFailure = 0x02,
-    //    InvalidDestinationEndpoint = 0x15,
-    //    NetworkAckFailure = 0x21,
-    //    NotJoinedToNetwork = 0x22,
-    //    SelfAddresses = 0x23,
-    //    AddressNotFound = 0x24,
-    //    RouteNotFound = 0x25
-    //};
-
-    //public enum DiscoveryStatus : byte
-    //{
-    //    NoDiscoveryOverhead = 0x00,
-    //    AddressDiscovery = 0x01,
-    //    RouteDiscovery = 0x02,
-    //    AddressAndRouteDiscovery = 0x03
-    //};
 }

@@ -10,6 +10,7 @@ namespace STLK
     internal class ApiFrameBuilder
     {
         private const byte startDelimiter = 0x7E;
+        private ApiFrame frame;
         private int position;
         private int length;
         private byte checksum;
@@ -28,11 +29,11 @@ namespace STLK
             Reset();
         }
 
-        public byte[] GetApiFrame()
+        public ApiFrame GetApiFrame()
         {
             if (IsComplete)
             {
-                return buffer;
+                return frame;
             }
             return null;
         }
@@ -53,7 +54,7 @@ namespace STLK
 
             switch (position)
             {
-                case 0: // Start Delimiter
+                case 0: // Start Delimitor
                     if (value == startDelimiter)
                     {
                         position++;
@@ -83,9 +84,13 @@ namespace STLK
                         if (checksum == 0xFF)
                         {
                             IsComplete = true;
+                            frame.FrameData = buffer;
                             break;
                         }
-                        Reset();
+                        else
+                        {
+                            Reset();
+                        }
                     }
                     buffer[position - 3] = value;
                     position++;
@@ -99,6 +104,7 @@ namespace STLK
             length = 0;
             checksum = 0;
             IsComplete = false;
+            frame = new ApiFrame();
         }
     }
 }

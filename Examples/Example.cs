@@ -23,7 +23,7 @@ namespace STLK
         /// <returns></returns>
         public int GetRssiOfLastReceivedFrame()
         {
-            ApiFrame rssiFrame = _xBee.SendRemoteAtCommandSync(XBeeCommand.ReceivedSignalStrength);
+            ApiFrame rssiFrame = _xBee.SendRemoteAtCommandSync(0x0013A2004086DA07, XBeeCommand.ReceivedSignalStrength);
 
             if (rssiFrame != null && rssiFrame.FrameData.Length == 16)
             {
@@ -40,7 +40,7 @@ namespace STLK
         /// </summary>
         public void GetRssiOfLastReceivedFrameAsync()
         {
-            _xBee.SendRemoteAtCommand(XBeeCommand.ReceivedSignalStrength, (frame) =>
+            _xBee.SendRemoteAtCommand(0x0013A2004086DA07, XBeeCommand.ReceivedSignalStrength, (frame) =>
             {
                 if (frame.FrameData.Length != 16)
                 {
@@ -67,7 +67,7 @@ namespace STLK
             else
             {
                 // read state of output port and negate it
-                _xBee.SetDigitalOutput(XBeeCommand.ADio2Configuration, (((ports >> 2) & 1) == 0));
+                _xBee.SetDigitalOutput(0x0013A2004086DA07, XBeeCommand.ADio2Configuration, (((ports >> 2) & 1) == 0));
             }
         }
     }

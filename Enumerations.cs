@@ -105,7 +105,7 @@ namespace STLK
         // Sleep Commands
         SleepMode = 0x534D,                 // SM
         NumberOfSleepPeriods = 0x534E,      // SN
-        SleepPeriod = 0x534C,               // SP
+        SleepPeriod = 0x5350,               // SP
         TimeBeforeSleep = 0x5354,           // ST
         SleepOptions = 0x534F,              // SO
     };
